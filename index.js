@@ -37,10 +37,10 @@ async function fetchVersions() {
     try {
       fs.writeFileSync(file, JSON.stringify(releases, null, 2));
     } catch (err) {
-      log.err("Could not write releases file:", err.message);
+      console.error("Could not write releases file:", err.message);
     }
   } catch (err) {
-    log.err("Could not fetch available releases:", err.message);
+    console.error("Could not fetch available releases:", err.message);
   }
 }
 
@@ -49,16 +49,19 @@ async function listVersions() {
     await fetchVersions();
     const releases = loadReleases().map((r) => r.name);
     for (const r of releases) {
-      console.log(r.substring(1));
+      const version = r.substring(1);
+      console.log(isInstalled(version) ? `${version} (installed)` : version);
     }
   } catch (err) {
-    log.err("Could not fetch available releases:", err.message);
+    console.error("Could not fetch available releases:", err.message);
   }
 }
 
 async function installVersion(version) {
-  const versionName = "v" + version;
   const releases = loadReleases();
+  const versionName =
+    version === "latest" ? getLatest(releases) : "v" + version;
+  version = versionName.substring(1);
   let release;
   for (const r of releases) {
     if (r.name === versionName) {
@@ -68,11 +71,9 @@ async function installVersion(version) {
   }
 
   if (!release) {
-    console.error("No release with name", version, "found.");
+    console.error(`No release with name v${version}, "found.`);
     return;
   }
-
-  const assetsUrl = release.assets_url;
 
   let zipFileName;
 
@@ -111,31 +112,27 @@ async function installVersion(version) {
 
   const zipFilePath = path.join(ROOT_DIR, zipFileName);
 
-  // TODO handle errors
+  try {
+    await downloadFile(asset.browser_download_url, zipFilePath);
 
-  await downloadFile(asset.browser_download_url, zipFilePath);
+    const versionDir = path.join(ROOT_DIR, version);
 
-  const versionDir = path.join(ROOT_DIR, version);
+    await decompress(zipFilePath, versionDir);
 
-  await decompress(zipFilePath, versionDir);
+    const files = fs.readdirSync(versionDir);
 
-  // Read the directory to get all file names
-  const files = fs.readdirSync(versionDir);
+    files.forEach((file) => {
+      const filePath = path.join(versionDir, file);
+      const stats = fs.statSync(filePath);
+      if (stats.isFile()) {
+        fs.chmodSync(filePath, 0o755);
+      }
+    });
 
-  // Iterate over each file and make it executable
-  files.forEach((file) => {
-    const filePath = path.join(versionDir, file);
-
-    // Check if the file is a regular file (not a directory)
-    const stats = fs.statSync(filePath);
-
-    if (stats.isFile()) {
-      // Set the permissions to executable (755)
-      fs.chmodSync(filePath, 0o755);
-    }
-  });
-
-  console.log("Ok");
+    console.log("Ok");
+  } catch (err) {
+    console.error("Failed to install:", err.message);
+  }
 }
 
 function useVersion(version) {
@@ -143,10 +140,11 @@ function useVersion(version) {
 }
 
 async function setDefaultVersion(version) {
-  const binPath = path.join(ROOT_DIR, "bin");
-  const dirPath = path.join(ROOT_DIR, version);
+  const versionName =
+    version === "latest" ? getLatest(loadReleases()) : "v" + version;
+  version = versionName.substring(1);
 
-  if (!fs.existsSync(dirPath)) {
+  if (!isInstalled(version)) {
     console.error(
       "Version",
       version,
@@ -155,17 +153,33 @@ async function setDefaultVersion(version) {
     return;
   }
 
+  const binPath = path.join(ROOT_DIR, "bin");
+  const dirPath = path.join(ROOT_DIR, version);
+
   if (fs.existsSync(binPath)) {
-    await fs.rmSync(binPath);
+    fs.rmSync(binPath);
   }
 
-  await fs.symlinkSync(dirPath, binPath);
+  fs.symlinkSync(dirPath, binPath);
 }
 
 function loadReleases() {
   const file = path.join(ROOT_DIR, "releases.json");
   const data = fs.readFileSync(file);
   return JSON.parse(data);
+}
+
+function getLatest(releases) {
+  return releases[0].name;
+}
+
+function isInstalled(version) {
+  const filePath = path.join(ROOT_DIR, version, "worterbuch");
+  if (!fs.existsSync(filePath)) {
+    return false;
+  }
+  const stats = fs.statSync(filePath);
+  return stats.isFile();
 }
 
 function main() {
