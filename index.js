@@ -157,7 +157,7 @@ async function setDefaultVersion(version) {
   const dirPath = path.join(ROOT_DIR, version);
 
   if (fs.existsSync(binPath)) {
-    fs.rmSync(binPath);
+    fs.rmSync(binPath, { recursive: true, force: true });
   }
 
   fs.symlinkSync(dirPath, binPath);
